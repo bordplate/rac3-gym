@@ -1,6 +1,8 @@
 #include "rc3.h"
 #include "common.h"
 
+#include "bridging.h"
+
 #include <sysutil/sysutil_gamecontent.h>
 
 #include <cell/cell_fs.h>
@@ -77,6 +79,11 @@ int cellGameContentPermitHook(char* contentInfoPath, char* usrdirPath) {
     return 0;
 }
 
+SHK_HOOK(void, pre_game_loop, void);
+void pre_game_loop_hook() {
+    _c_game_tick();
+}
+
 
 void rc3_init() {
     MULTI_LOG("Multiplayer initializing.\n");
@@ -85,6 +92,8 @@ void rc3_init() {
 
     SHK_BIND_HOOK(cellGameBootCheck, cellGameBootCheckHook);
     SHK_BIND_HOOK(cellGameContentPermit, cellGameContentPermitHook);
+
+    SHK_BIND_HOOK(pre_game_loop, pre_game_loop_hook);
 
     MULTI_LOG("Initialized memory allocator. Binding hooks\n");
 

@@ -11,3 +11,7 @@ cellGameContentPermit:
 cellGameBootCheck:
     addr: 0x981064
     replacedInstr: stdu r1, -0x1a0(r1)
+
+pre_game_loop:
+    addr: 0x1d8840
+    emitTrampoline: no

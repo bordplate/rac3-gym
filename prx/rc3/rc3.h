@@ -43,6 +43,11 @@ enum CONTROLLER_INPUT {
 void rc3_init();
 void rc3_shutdown();
 
+extern int current_level;
+extern int destination_level;
+
+extern int game_state;
+
 };
 
 #endif // RC3_H

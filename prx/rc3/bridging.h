@@ -9,6 +9,9 @@
 extern "C" {
 #endif
 
+    void _c_game_tick();
+
+
 #ifdef __cplusplus
 }
 #endif
