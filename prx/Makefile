@@ -27,6 +27,7 @@ PPU_PRX_LDFLAGS  += \
 	-lsyscall \
 	-llv2_stub \
 	-lc_stub \
+	-lio_stub \
 	-lfs_stub \
 	-lstdc++ \
 	-lm_stub \

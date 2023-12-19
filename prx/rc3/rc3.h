@@ -6,6 +6,8 @@
 #include <lib/shk.h>
 #include <lib/types.h>
 
+#include "Moby.h"
+
 extern "C" {
 
 typedef enum GameState {
@@ -40,6 +42,23 @@ enum CONTROLLER_INPUT {
     Left = 32768
 };
 
+struct CollOutput {
+    void* grid;
+    float pad1;
+    float pad2;
+    float pad3;
+    int count;
+    int damage_next;
+    Moby* pMoby;
+    int poly;
+    Vec4 ip;
+    Vec4 push;
+    Vec4 normal;
+    Vec4 v0;
+    Vec4 v1;
+    Vec4 v2;
+};
+
 void rc3_init();
 void rc3_shutdown();
 
@@ -47,6 +66,12 @@ extern int current_level;
 extern int destination_level;
 
 extern int game_state;
+
+extern Moby *hero_moby;
+
+extern CollOutput coll_output;
+
+SHK_FUNCTION_DEFINE_STATIC_5(0x956c0, int, coll_line, Vec4*, position1, Vec4*, position2, int, flags, Moby*, moby, Vec4*, unk_vec);
 
 };
 

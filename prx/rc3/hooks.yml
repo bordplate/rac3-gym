@@ -15,3 +15,7 @@ cellGameBootCheck:
 pre_game_loop:
     addr: 0x1d8840
     emitTrampoline: no
+
+cellPadGetDataRedirect:
+    addr: 0x9432d0
+    replacedInstr: stdu r1, -0xa0(r1)

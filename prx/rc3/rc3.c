@@ -6,6 +6,7 @@
 #include <sysutil/sysutil_gamecontent.h>
 
 #include <cell/cell_fs.h>
+#include <cell/pad.h>
 
 extern "C" {
 
@@ -84,6 +85,41 @@ void pre_game_loop_hook() {
     _c_game_tick();
 }
 
+#define remote_pressed_buttons *((int*)0x1B00008)
+#define last_remote_pressed_buttons *((int*)0x1B0000C)
+
+SHK_HOOK(int32_t, cellPadGetDataRedirect, uint32_t, CellPadData*);
+int32_t cellPadGetDataRedirectHook(uint32_t port_no, CellPadData *data) {
+    int32_t ret = cellPadGetData(port_no, data);
+
+    int32_t len = data->len;
+
+    memset(data, 0, 16);
+
+    data->len = len;
+
+//    if (data->len != 0) {
+//        MULTI_LOG("Port_no: %d; Data len: %d. inputs: %.4x. Ret: %d\n", port_no, data->len,
+//                  (data->button[2] << 8) + data->button[3], ret);
+//    }
+
+    if (current_level > 0) {
+        if (data->len == 0 && (remote_pressed_buttons != last_remote_pressed_buttons)) {
+            data->len = 24;
+        }
+
+        data->button[2] |= (remote_pressed_buttons & 0xff00) >> 8;
+        data->button[3] |= remote_pressed_buttons & 0x00ff;
+        data->button[4] = 0x7f;
+        data->button[5] = 0x7f;
+        data->button[6] = 0x7f;
+        data->button[7] = 0x7f;
+    }
+
+    last_remote_pressed_buttons = remote_pressed_buttons;
+
+    return ret;
+}
 
 void rc3_init() {
     MULTI_LOG("Multiplayer initializing.\n");
@@ -94,6 +130,8 @@ void rc3_init() {
     SHK_BIND_HOOK(cellGameContentPermit, cellGameContentPermitHook);
 
     SHK_BIND_HOOK(pre_game_loop, pre_game_loop_hook);
+
+    SHK_BIND_HOOK(cellPadGetDataRedirect, cellPadGetDataRedirectHook);
 
     MULTI_LOG("Initialized memory allocator. Binding hooks\n");
 
