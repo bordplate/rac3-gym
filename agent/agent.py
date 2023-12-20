@@ -25,7 +25,7 @@ class DeepQNetwork(nn.Module):
         self.lstm_units = lstm_units
 
         # self.fc0 = nn.Linear(feature_count, self.hidden_dims)
-        self.fc0 = nn.Linear(10, self.hidden_dims_halved)
+        self.fc0 = nn.Linear(11, self.hidden_dims_halved)
         self.bn0 = nn.BatchNorm1d(self.hidden_dims)
 
         self.raycast_cnn = nn.Sequential(
@@ -60,7 +60,7 @@ class DeepQNetwork(nn.Module):
             factor=0.95,
             patience=50,
             threshold=0.5,
-            min_lr=1e-7,
+            min_lr=1.5e-6,
             threshold_mode='abs'
         )
 
@@ -84,7 +84,7 @@ class DeepQNetwork(nn.Module):
             hidden_state = T.zeros(self.num_layers, state.size(0), self.lstm_units).to(self.device)
             cell_state = T.zeros(self.num_layers, state.size(0), self.lstm_units).to(self.device)
 
-        x = F.leaky_relu(self.fc0(state[:, :, :10]), 0.01)
+        x = F.leaky_relu(self.fc0(state[:, :, :11]), 0.01)
         # x = F.leaky_relu(self.fc0(state), 0.01)
         # x = self.bn0(x)
 
@@ -94,7 +94,7 @@ class DeepQNetwork(nn.Module):
         batch_size, num_observations, feature_size = state.shape
 
         # Separate the raycasting data
-        raycasting_data = state[:, :, -32:]  # Last 10 features are raycasting data
+        raycasting_data = state[:, :, -32:]  # Last 32 features are raycasting data
 
         # Reshape for batch processing:
         # New shape: [batch_size * num_observations, 2, 16]
@@ -203,7 +203,7 @@ class PrioritizedReplayBuffer:
 
 class Agent:
     def __init__(self, gamma, epsilon, lr, input_dims, batch_size, n_actions,
-                 max_mem_size=100000, eps_end=0.005, eps_dec=1e-3, sequence_length=5):
+                 max_mem_size=100000, eps_end=0.005, eps_dec=9e-5, sequence_length=5):
         self.gamma = gamma
         self.epsilon = epsilon
         self.eps_min = eps_end
@@ -276,7 +276,8 @@ class Agent:
             actions = actions[0]
             action = T.argmax(actions).item()
         else:
-            action = np.random.choice(self.action_space)
+            # Only choose actions that lead right
+            action = np.random.choice([0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15])
 
         return action
 

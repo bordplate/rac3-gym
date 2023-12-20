@@ -63,6 +63,7 @@ class RatchetEnvironment:
             'rewards/crash_penalty': 0,
             'rewards/damage_penalty': 0,
             'rewards/distance_reward': 0,
+            'rewards/checkpoint_reward': 0,
         }
 
         # Check that we've landed on the right level yet
@@ -82,7 +83,15 @@ class RatchetEnvironment:
 
         if self.game.get_game_state() != 0:
             self.game.set_game_state(0)
+
+        attempts = 0
+        while self.game.get_game_frame_count() > 0:
+            attempts += 1
             self.game.frame_advance()
+            if attempts > 10:
+                # Reset again
+                self.game.set_vidcomic_state(2)
+                attempts = 0
 
         # Clear game inputs so we don't keep moving from the last episode
         self.game.set_controller_input(0)
@@ -111,25 +120,26 @@ class RatchetEnvironment:
             0x20,    # Shoot
             0x40,    # Jump
             0x80,    # Punch
-            0x2000,  # Left
+            0x8000,  # Left
             0x1000,  # Up
-            0x8000,  # Right
+            0x2000,  # Right
 
-            0x2000 | 0x20,  # Left + Shoot
+            0x8000 | 0x20,  # Left + Shoot
             0x1000 | 0x20,  # Up + Shoot
-            0x8000 | 0x20,  # Right + Shoot
-            0x2000 | 0x40,  # Left + Jump
+            0x2000 | 0x20,  # Right + Shoot
+            0x8000 | 0x40,  # Left + Jump
             0x1000 | 0x40,  # Up + Jump
-            0x8000 | 0x40,  # Right + Jump
-            0x2000 | 0x80,  # Left + Punch
+            0x2000 | 0x40,  # Right + Jump
+            0x8000 | 0x80,  # Left + Punch
             0x1000 | 0x80,  # Up + Punch
-            0x8000 | 0x80,  # Right + Punch
+            0x2000 | 0x80,  # Right + Punch
         ]
 
         # Communicate game inputs with game
         self.game.set_controller_input(actions_mapping[action])
 
         pre_health = self.game.get_health()
+        pre_game_frame_count = self.game.get_game_frame_count()
 
         # Frame advance the game
         if not self.game.frame_advance() or not self.game.frame_advance():
@@ -145,20 +155,26 @@ class RatchetEnvironment:
         post_game_frame_count = self.game.get_game_frame_count()
         post_ammo = self.game.get_ammo()
 
+        if post_game_frame_count < pre_game_frame_count:
+            reward -= 0.0
+            self.reward_counters['rewards/death_penalty'] += 0
+            self.distance = 0
+            terminal = True
+
         # Distance
         if post_position.x > self.max_x:
             self.distance += post_position.x - self.max_x
             self.max_x = post_position.x
-            reward += 0.05
-            self.reward_counters['rewards/distance_reward'] += 0.05
+            reward += 0.01
+            self.reward_counters['rewards/distance_reward'] += 0.01
 
             self.last_time_moved = post_game_frame_count
 
         if post_position.z > self.max_z:
             self.distance += post_position.z - self.max_z
             self.max_z = post_position.z
-            reward += 0.05
-            self.reward_counters['rewards/distance_reward'] += 0.05
+            reward += 0.01
+            self.reward_counters['rewards/distance_reward'] += 0.01
 
             self.last_time_moved = post_game_frame_count
 
@@ -166,15 +182,15 @@ class RatchetEnvironment:
             self.last_distance_check = self.distance
 
             # Scale reward to time it took to get here, faster = more reward
-            reward += np.max([5 - (post_game_frame_count - self.last_time_check) / 150, 1])
+            reward += np.max([10 - (post_game_frame_count - self.last_time_check) / 30, 1])
 
+            self.reward_counters['rewards/checkpoint_reward'] += np.max([10 - (post_game_frame_count - self.last_time_check) / 30, 1])
             self.last_time_check = post_game_frame_count
-            self.reward_counters['rewards/distance_reward'] += 5 - (post_game_frame_count - self.last_time_check) / 60
 
         # Shame agent for not progressing distance in a long time
         if self.last_time_moved + 60 * 10 < post_game_frame_count:
-            reward -= 0.5
-            self.reward_counters['rewards/distance_reward'] -= 0.5
+            reward -= 0.5 * (post_health / 20)
+            self.reward_counters['rewards/timeout_penalty'] += 0.5 * (post_health / 20)
             terminal = True
 
         # Collision
@@ -182,8 +198,8 @@ class RatchetEnvironment:
 
         # Health and damage
         if post_health <= 0 or post_hero_state in [160, 161]:
-            reward -= 1.0
-            self.reward_counters['rewards/death_penalty'] += 1
+            reward -= 0.5
+            self.reward_counters['rewards/death_penalty'] += 0.5
             terminal = True
         elif post_health < pre_health:
             reward -= 0.5
@@ -201,6 +217,7 @@ class RatchetEnvironment:
             np.interp(self.game.get_current_frame_count(), [0, 999999], [-1.0, 1.0]),
             np.interp(post_ammo, [0, 100], [-1.0, 1.0]),
             np.interp(post_rotation.z, [-8, 8], [-1.0, 1.0]),
+            np.interp((self.last_time_moved + 60 * 10) - post_game_frame_count, [-800, 800], [-1.0, 1.0]),
             *collisions,
             *collision_types,
         ]

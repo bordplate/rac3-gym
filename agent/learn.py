@@ -27,10 +27,10 @@ def start_training():
 
     random_instance_id = random.randint(0, 999999)  # Generate a random instance ID to use when saving the model
 
-    sequence_length = 30  # Number of observations to use as input to the network
+    sequence_length = 4  # Number of observations to use as input to the network
 
-    learning_rate = 1.0e-4
-    features = 42
+    learning_rate = 1.5e-6
+    features = 43
     batch_size = 64
     train_frequency = 4
     target_update_frequency = 10000  # How often we update the target network
@@ -80,7 +80,7 @@ def start_training():
     for i in range(n_games):
         done = False
 
-        if i > 0 and i % 10 == 0:
+        if i > 0 and i % 5 == 0:
             env.cycle_level()
 
         agent.start_new_episode()
@@ -103,7 +103,6 @@ def start_training():
             action = agent.choose_action(observation_sequence)
             observation_, reward, done = env.step(action)
 
-            # Frame skip to improve temporal resolution
             new_observation_sequence = np.concatenate((observation_sequence[1:], np.array([observation_])), axis=0)
             agent.store_transition(observation_sequence, action, reward, new_observation_sequence, done)
 
