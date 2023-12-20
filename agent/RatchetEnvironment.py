@@ -1,8 +1,8 @@
 import time
 import numpy as np
 
-from game import Vector3
-from game import Game
+from Game import Vector3
+from Game import Game
 
 
 class RatchetEnvironment:
@@ -21,6 +21,8 @@ class RatchetEnvironment:
         self.current_level_index = 0
 
         self.timer = 0
+
+        self.is_wall_jumping = False
 
         self.max_x = 0.0
         self.max_z = 0.0
@@ -50,6 +52,9 @@ class RatchetEnvironment:
 
     def reset(self):
         self.timer = 0
+
+        self.is_wall_jumping = False
+
         self.max_x = 0
         self.max_z = 0
         self.distance = 0
@@ -64,6 +69,7 @@ class RatchetEnvironment:
             'rewards/damage_penalty': 0,
             'rewards/distance_reward': 0,
             'rewards/checkpoint_reward': 0,
+            'rewards/wall_jump_reward': 0,
         }
 
         # Check that we've landed on the right level yet
@@ -182,9 +188,9 @@ class RatchetEnvironment:
             self.last_distance_check = self.distance
 
             # Scale reward to time it took to get here, faster = more reward
-            reward += np.max([10 - (post_game_frame_count - self.last_time_check) / 30, 1])
+            reward += np.max([10 - (post_game_frame_count - self.last_time_check) / 60, 1])
 
-            self.reward_counters['rewards/checkpoint_reward'] += np.max([10 - (post_game_frame_count - self.last_time_check) / 30, 1])
+            self.reward_counters['rewards/checkpoint_reward'] += np.max([10 - (post_game_frame_count - self.last_time_check) / 60, 1])
             self.last_time_check = post_game_frame_count
 
         # Shame agent for not progressing distance in a long time
@@ -192,6 +198,15 @@ class RatchetEnvironment:
             reward -= 0.5 * (post_health / 20)
             self.reward_counters['rewards/timeout_penalty'] += 0.5 * (post_health / 20)
             terminal = True
+
+        # Encourage wall jumps
+        if post_hero_state == 167:  # Wall jumps left and right
+            if not self.is_wall_jumping:
+                reward += 0.1
+                self.reward_counters['rewards/wall_jump_reward'] += 0.1
+                self.is_wall_jumping = True
+        elif self.is_wall_jumping:
+            self.is_wall_jumping = False
 
         # Collision
         collisions, collision_types = self.game.get_collision_info()
@@ -202,8 +217,8 @@ class RatchetEnvironment:
             self.reward_counters['rewards/death_penalty'] += 0.5
             terminal = True
         elif post_health < pre_health:
-            reward -= 0.5
-            self.reward_counters['rewards/damage_penalty'] += 0.5
+            reward -= 0.5 * (pre_health - post_health) / 20
+            self.reward_counters['rewards/damage_penalty'] += 0.5 * (pre_health - post_health) / 20
 
         # Normalize all state values
         state = [
