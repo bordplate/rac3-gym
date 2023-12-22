@@ -23,7 +23,13 @@ class RatchetEnvironment:
         self.timer = 0
 
         self.is_wall_jumping = False
+        self.standing_still_frames = 0
 
+        self.last_health = 100
+        self.remaining_idle_time = 0.0
+
+        self.x = 0.0
+        self.z = 0.0
         self.max_x = 0.0
         self.max_z = 0.0
         self.distance = 0.0
@@ -54,6 +60,10 @@ class RatchetEnvironment:
         self.timer = 0
 
         self.is_wall_jumping = False
+        self.standing_still_frames = 0
+
+        self.last_health = 100
+        self.remaining_idle_time = 0.0
 
         self.max_x = 0
         self.max_z = 0
@@ -70,6 +80,8 @@ class RatchetEnvironment:
             'rewards/distance_reward': 0,
             'rewards/checkpoint_reward': 0,
             'rewards/wall_jump_reward': 0,
+            'rewards/stand_still_penalty': 0,
+            'rewards/speed_reward': 0,
         }
 
         # Check that we've landed on the right level yet
@@ -105,6 +117,8 @@ class RatchetEnvironment:
         position = self.game.get_hero_position()
         self.max_x = position.x
         self.max_z = position.z
+        self.x = position.x
+        self.z = position.z
 
         self.game.set_health(100)
 
@@ -144,7 +158,7 @@ class RatchetEnvironment:
         # Communicate game inputs with game
         self.game.set_controller_input(actions_mapping[action])
 
-        pre_health = self.game.get_health()
+        pre_position = self.game.get_hero_position()
         pre_game_frame_count = self.game.get_game_frame_count()
 
         # Frame advance the game
@@ -168,6 +182,22 @@ class RatchetEnvironment:
             terminal = True
 
         # Distance
+        distance_travelled = np.sqrt((post_position.x - pre_position.x) ** 2 + (post_position.z - pre_position.z) ** 2)
+
+        if distance_travelled > 0.5:
+            reward += (distance_travelled * 2) / 10
+            self.reward_counters['rewards/speed_reward'] += (distance_travelled * 2) / 10
+
+        # Encourage movement
+        if abs(post_position.x - pre_position.x) < 0.01:
+            self.standing_still_frames += 1
+        else:
+            self.standing_still_frames = 0
+
+        if self.standing_still_frames > 5:
+            reward -= 0.05
+            self.reward_counters['rewards/stand_still_penalty'] -= 0.05
+
         if post_position.x > self.max_x:
             self.distance += post_position.x - self.max_x
             self.max_x = post_position.x
@@ -216,9 +246,14 @@ class RatchetEnvironment:
             reward -= 0.5
             self.reward_counters['rewards/death_penalty'] += 0.5
             terminal = True
-        elif post_health < pre_health:
-            reward -= 0.5 * (pre_health - post_health) / 20
-            self.reward_counters['rewards/damage_penalty'] += 0.5 * (pre_health - post_health) / 20
+        elif post_health < self.last_health:
+            reward -= 0.5 * (self.last_health - post_health) / 20
+            self.reward_counters['rewards/damage_penalty'] += 0.5 * (self.last_health - post_health) / 20
+
+        self.last_health = post_health
+        self.remaining_idle_time = ((self.last_time_moved + 60 * 10) - post_game_frame_count) / 60
+        self.x = post_position.x
+        self.z = post_position.z
 
         # Normalize all state values
         state = [
@@ -232,7 +267,8 @@ class RatchetEnvironment:
             np.interp(self.game.get_current_frame_count(), [0, 999999], [-1.0, 1.0]),
             np.interp(post_ammo, [0, 100], [-1.0, 1.0]),
             np.interp(post_rotation.z, [-8, 8], [-1.0, 1.0]),
-            np.interp((self.last_time_moved + 60 * 10) - post_game_frame_count, [-800, 800], [-1.0, 1.0]),
+            np.interp(self.remaining_idle_time, [-800, 800], [-1.0, 1.0]),
+            np.interp(actions_mapping[action], [0, 0xFFFF], [-1.0, 1.0]),
             *collisions,
             *collision_types,
         ]

@@ -93,47 +93,52 @@ class PrioritizedReplayBuffer:
     def __init__(self, capacity, alpha=0.6):
         self.capacity = capacity
         self.alpha = alpha
-        self.buffer = []
-        self.priorities = []
+        self.buffer = [None] * capacity
+        self.priorities = [1] * capacity
         self.position = 0
+        self.total = 0
         self.lock = Lock()
         self.new_samples = 0
+        self.max_priority = 1
 
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     def add(self, state, action, reward, next_state, done, next_hidden_state, next_cell_state):
-        max_priority = max(self.priorities, default=1.0)
+        max_priority = self.max_priority
 
-        state = torch.tensor(state, dtype=torch.float32).to(self.device)
-        action = torch.tensor(action, dtype=torch.int64).to(self.device)
-        reward = torch.tensor(reward, dtype=torch.float32).to(self.device)
-        next_state = torch.tensor(next_state, dtype=torch.float32).to(self.device)
-        done = torch.tensor(done, dtype=torch.bool).to(self.device)
+        state = torch.tensor(state, dtype=torch.float32)
+        action = torch.tensor(action, dtype=torch.int64)
+        reward = torch.tensor(reward, dtype=torch.float32)
+        next_state = torch.tensor(next_state, dtype=torch.float32)
+        done = torch.tensor(done, dtype=torch.bool)
 
-        next_hidden_state = next_hidden_state.detach().clone().to(self.device)
-        next_cell_state = next_cell_state.detach().clone().to(self.device)
+        next_hidden_state = next_hidden_state
+        next_cell_state = next_cell_state
 
         # Link "current" hidden state to previous transitions' next_hidden_state
-        if len(self.buffer) > 0:
-            hidden_state = self.buffer[self.position-1][7]
-            cell_state = self.buffer[self.position-1][8]
+        if self.total > 0:
+            # If last transition was terminal, reset hidden and cell state
+            if self.buffer[self.position-1][4]:
+                hidden_state = torch.zeros_like(next_hidden_state)
+                cell_state = torch.zeros_like(next_cell_state)
+            else:
+                hidden_state = self.buffer[self.position-1][7]
+                cell_state = self.buffer[self.position-1][8]
         else:
-            hidden_state = next_hidden_state.detach().clone().to(self.device)
-            cell_state = next_cell_state.detach().clone().to(self.device)
+            hidden_state = torch.zeros_like(next_hidden_state)
+            cell_state = torch.zeros_like(next_cell_state)
 
         self.lock.acquire()
 
-        if len(self.buffer) < self.capacity:
-            self.buffer.append((state, action, reward, next_state, done, hidden_state, cell_state, next_hidden_state, next_cell_state))
-            self.priorities.append(max_priority)
-        else:
-            self.buffer[self.position] = (state, action, reward, next_state, done, hidden_state, cell_state, next_hidden_state, next_cell_state)
-            self.priorities[self.position] = max_priority
+        self.buffer[self.position] = (state, action, reward, next_state, done, hidden_state, cell_state, next_hidden_state, next_cell_state)
+        self.priorities[self.position] = max_priority
 
         self.position = (self.position + 1) % self.capacity
+        self.lock.release()
+
         self.new_samples += 1
 
-        self.lock.release()
+        self.total += 1
 
     def sample(self, batch_size, beta=0.4):
         if not self.buffer:
@@ -141,17 +146,22 @@ class PrioritizedReplayBuffer:
 
         self.lock.acquire()
 
-        priorities = np.array(self.priorities) ** self.alpha
+        buffer_len = min(self.total, self.capacity)
+
+        priorities = np.array(self.priorities[:buffer_len]) ** self.alpha
         probabilities = priorities / priorities.sum()
-        indices = np.random.choice(len(self.buffer), batch_size, replace=True, p=probabilities)
+        indices = np.random.choice(buffer_len, batch_size, replace=True, p=probabilities)
         samples = [self.buffer[idx] for idx in indices]
 
-        total = len(self.buffer)
+        # Set max priority based on the sampled priorities
+        self.max_priority = max(priorities[indices])
+
+        self.lock.release()
+
+        total = buffer_len
         weights = (total * probabilities[indices]) ** (-beta)
         weights /= weights.max()
         weights = np.array(weights, dtype=np.float32)
-
-        self.lock.release()
 
         batch = FullTransition(*zip(*samples))
         states, actions, rewards, next_states, dones = map(lambda x: torch.stack(x).to(self.device), batch[:-4])

@@ -9,7 +9,7 @@ import numpy as np
 from redis import Redis
 
 
-features = 43
+features = 44
 sequence_length = 8
 
 configuration = {
@@ -72,6 +72,7 @@ def start_worker():
             configuration["model"] = redis.get("model")
             if configuration["model"] is not None:
                 agent.Q_eval.load_state_dict(pickle.loads(configuration["model"]))
+                last_model_fetch_time = float(redis.get("model_timestamp"))
 
         update_configuration(redis)
 
@@ -108,6 +109,16 @@ def start_worker():
             steps += 1
             total_steps += 1
 
+            if steps % 5 == 0:
+                print(f"Score: %6.2f    X: %06.2f/%06.2f Z: %06.2f/%06.2f    Idle countdown: %5.2f      " % (
+                    accumulated_reward,
+                    env.x,
+                    env.max_x,
+                    env.z,
+                    env.max_z,
+                    env.remaining_idle_time,
+                ), end="\r")
+
             if done:
                 break
 
@@ -115,11 +126,11 @@ def start_worker():
         avg_score = np.mean(scores[-100:])
 
         print('episode:', episodes, 'steps:', total_steps, 'score: %.2f' % accumulated_reward,
-              'avg score: %.2f' % avg_score,
+              'avg score: %.2f' % avg_score, 'chkpt update time: %.0f' % last_model_fetch_time,
               'eps: %.2f' % agent.epsilon if agent.epsilon > agent.eps_min else '')
 
         # Append score to Redis key "scores"
-        redis.rpush("avg_scores", avg_score)
+        redis.rpush("avg_scores", accumulated_reward)
 
         episodes += 1
 

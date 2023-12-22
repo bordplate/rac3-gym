@@ -1,7 +1,8 @@
 from Agent import Agent
 from ReplayBuffer import EpisodeReplayBuffer
 
-from redis import Redis
+from redis import Redis, ConnectionPool
+from redis import from_url as redis_from_url
 
 import torch
 import numpy as np
@@ -25,28 +26,49 @@ def listen_for_messages(redis: Redis, replay_buffer: EpisodeReplayBuffer):
 
     # Start listening for messages
     try:
-        for message in pubsub.listen():
-            if message["type"] == "message":
-                # Convert the message to states from bytes
-                data = message["data"]
-                data = pickle.loads(data)
-                transition = data.transition
+        i = 0
+        while True:
+            i += 1
 
-                replay_buffer.add(
-                    transition.state,
-                    transition.action,
-                    transition.reward,
-                    transition.next_state,
-                    transition.done,
-                    transition.hidden_state,
-                    transition.cell_state,
-                )
+            messages = []
+            while True:
+                message = pubsub.get_message(ignore_subscribe_messages=True)
+
+                if message is None:
+                    break
+
+                messages.append(message)
+
+                if len(messages) > 1000:
+                    print("Flushing messages")
+
+                    while pubsub.get_message(ignore_subscribe_messages=True) is not None:
+                        pass
+
+                    break
+
+            for message in messages:
+                if message["type"] == "message":
+                    # Convert the message to states from bytes
+                    data = message["data"]
+                    data = pickle.loads(data)
+                    transition = data.transition
+
+                    replay_buffer.add(
+                        transition.state,
+                        transition.action,
+                        transition.reward,
+                        transition.next_state,
+                        transition.done,
+                        transition.hidden_state,
+                        transition.cell_state,
+                    )
+
     except Exception as e:
         print(e)
 
     # Restart ourselves if we get here
     print("Restarting listener...")
-    redis = Redis(host="localhost", port=6379, db=0)
     listen_for_messages(redis, replay_buffer)
 
 
@@ -84,13 +106,13 @@ def start():
 
     # Hyperparameters
     learning_rate = 2.0e-6
-    features = 43
+    features = 44
     batch_size = 64
     train_frequency = 4
     target_update_frequency = 10000  # How often we update the target network
     sequence_length = 8
 
-    redis = Redis(host="localhost", port=6379, db=0)
+    redis = redis_from_url(f"redis://{args.redis_host}:{args.redis_port}")
 
     # Create an agent
     agent = Agent(gamma=0.99, epsilon=1.0, batch_size=batch_size, n_actions=16, eps_end=0.005,
@@ -102,6 +124,7 @@ def start():
 
     existing_model = redis.get("model") if args.model is None else None
     if existing_model is not None:
+        agent.epsilon = float(redis.get("epsilon"))
         agent.Q_eval.load_state_dict(pickle.loads(existing_model))
         print("Loaded existing model from Redis")
 
@@ -139,49 +162,51 @@ def start():
 
             losses.append(loss)
 
-        # Calculate samples per second
-        if time.time() - last_time > 1:
-            samples_per_second = last_samples / (time.time() - last_time)
-            last_time = time.time()
-            last_samples = 0
+            # Calculate samples per second
+            if time.time() - last_time > 1:
+                samples_per_second = last_samples / (time.time() - last_time)
+                last_time = time.time()
+                last_samples = 0
 
-            samples_history.append(samples_per_second)
-            samples_history = samples_history[-100:]
+                samples_history.append(samples_per_second)
+                samples_history = samples_history[-10:]
 
-        if steps % target_update_frequency == 0:
-            agent.update_target_network()
+            if steps % target_update_frequency == 0:
+                agent.update_target_network()
 
-        if steps % 500 == 0:
-            model = pickle.dumps(agent.Q_eval.state_dict())
-            redis.set("model", model)
-            redis.set("model_timestamp", time.time())
+            if steps % 200 == 0:
+                model = pickle.dumps(agent.Q_eval.state_dict())
+                redis.set("model", model)
+                redis.set("model_timestamp", time.time())
 
-            redis.set("epsilon", agent.epsilon)
+                redis.set("epsilon", agent.epsilon)
 
-            # Get the last 100 scores from Redis key "avg_scores" and cast them to floats
-            scores = redis.lrange("avg_scores", -100, -1)
-            scores = [float(score) for score in scores]
+                # Get the last 100 scores from Redis key "avg_scores" and cast them to floats
+                scores = redis.lrange("avg_scores", -100, -1)
+                scores = [float(score) for score in scores]
 
-            if len(losses) > 0:
-                print('avg loss: %.2f' % np.mean(losses[-100:]), 'avg_score: %.2f' % np.mean(scores),
-                      'epsilon: %.2f' % agent.epsilon, 'samples/sec: %.2f' % np.mean(samples_history))
+                if len(losses) > 0:
+                    print('avg loss: %.2f' % np.mean(losses[-100:]), 'avg_score: %.2f' % np.mean(scores),
+                          'epsilon: %.2f' % agent.epsilon, 'samples/sec: %.2f' % np.mean(samples_history))
 
-            # Save the model every 100000 steps
-            if steps % 100000 == 0:
-                save_model(agent, f"models_bak/rac3_vidcomics_{steps}.pth")
-                print(f"Saved model to models_bak/rac3_vidcomics_{int(steps/100000)}k.pth")
+                # Save the model every 10000 steps
+                if steps % 10000 == 0:
+                    save_model(agent, f"models_bak/rac3_vidcomics_{steps}.pth")
+                    print(f"Saved model to models_bak/rac3_vidcomics_{int(steps/1000)}k.pth")
 
-            if args.wandb:
-                wandb.log({
-                    "avg_score": np.mean(scores),
-                    "loss": np.mean(losses[-100:]),
-                    "epsilon": agent.epsilon,
-                    "samples_per_second": np.mean(samples_history)
-                })
+                if args.wandb:
+                    wandb.log({
+                        "avg_score": np.mean(scores),
+                        "loss": np.mean(losses[-100:]),
+                        "epsilon": agent.epsilon,
+                        "samples_per_second": np.mean(samples_history)
+                    })
 
-        steps += 1
+            steps += 1
 
-        time.sleep(0.010)
+            continue
+
+        time.sleep(0.001)
 
 
 if __name__ == "__main__":
