@@ -7,6 +7,7 @@ import pickle
 import numpy as np
 
 from redis import Redis
+from redis import from_url as redis_from_url
 
 
 features = 44
@@ -30,6 +31,8 @@ def start_worker():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rpcs3-path", type=str, required=True)
     parser.add_argument("--process-name", type=str, required=True)
+    parser.add_argument("--redis-host", type=str, default="localhost")
+    parser.add_argument("--redis-port", type=int, default=6379)
     parser.add_argument("--render", action="store_true", default=True)
     parser.add_argument("--force-watchdog", action="store_false")
     parser.add_argument("--epsilon", type=float, default=None)
@@ -53,7 +56,7 @@ def start_worker():
     env.start()
 
     # Connect to Redis
-    redis = Redis(host="localhost", port=6379, db=0)
+    redis = redis_from_url(f"redis://{args.redis_host}:{args.redis_port}")
 
     if epsilon_override is None:
         update_configuration(redis)
