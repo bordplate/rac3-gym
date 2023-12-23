@@ -102,12 +102,15 @@ def start():
     args.add_argument("--redis-port", type=int, default=6379)
     args.add_argument("--model", type=str, default=None)
     args.add_argument("--wandb", type=bool, default=False if "pydevd" in sys.modules else True)
+    args.add_argument("--commit", type=bool, default=False if "pydevd" in sys.modules else True)
     args = args.parse_args()
+
+    commit = args.commit
 
     # Hyperparameters
     learning_rate = 2.0e-6
     features = 44
-    batch_size = 64
+    batch_size = 256
     train_frequency = 4
     target_update_frequency = 10000  # How often we update the target network
     sequence_length = 8
@@ -121,22 +124,36 @@ def start():
     # Load existing model if load_model is set
     if args.model:
         load_model(agent, args.model)
+        agent.update_target_network()
+        print("Loaded model from file")
 
     existing_model = redis.get("model") if args.model is None else None
     if existing_model is not None:
         agent.epsilon = float(redis.get("epsilon"))
         agent.Q_eval.load_state_dict(pickle.loads(existing_model))
+
+        # Load optimizer if it exists
+        existing_optimizer = redis.get("optimizer")
+        if existing_optimizer is not None:
+            agent.Q_eval.optimizer.load_state_dict(pickle.loads(existing_optimizer))
+
+        agent.update_target_network()
+
+        agent.Q_eval.train()
+
         print("Loaded existing model from Redis")
 
     if args.wandb:
-        wandb.init(project="rac3-vidcomics", config={
+        current_run_id = redis.get("wandb_run_id")
+
+        wandb.init(project="rac3-vidcomics", id=current_run_id.decode(), config={
             "learning_rate": learning_rate,
             "sequence_length": sequence_length,
             "batch_size": batch_size,
             "features": features,
             "train_frequency": train_frequency,
             "target_update_frequency": target_update_frequency,
-        })
+        }, resume="must" if current_run_id is not None else None)
 
         update_graph_html(wandb.run.get_url())
 
@@ -155,56 +172,64 @@ def start():
     samples_history = []
 
     while True:
-        if agent.replay_buffer.new_samples > train_frequency:
-            last_samples += agent.replay_buffer.new_samples
+        if agent.replay_buffer.total <= 64:
+            time.sleep(0.1)
+            continue
 
-            loss = agent.learn()
+        #if agent.replay_buffer.new_samples > train_frequency:
+        last_samples += agent.replay_buffer.new_samples
 
-            losses.append(loss)
+        loss = agent.learn()
 
-            # Calculate samples per second
-            if time.time() - last_time > 1:
-                samples_per_second = last_samples / (time.time() - last_time)
-                last_time = time.time()
-                last_samples = 0
+        losses.append(loss)
 
-                samples_history.append(samples_per_second)
-                samples_history = samples_history[-10:]
+        # Calculate samples per second
+        if time.time() - last_time > 1:
+            samples_per_second = last_samples / (time.time() - last_time)
+            last_time = time.time()
+            last_samples = 0
 
-            if steps % target_update_frequency == 0:
-                agent.update_target_network()
+            samples_history.append(samples_per_second)
+            samples_history = samples_history[-10:]
 
-            if steps % 200 == 0:
+        # Update target network used for calculating the target Q values
+        if steps % target_update_frequency == 0:
+            agent.update_target_network()
+
+        # Updating model in Redis, log stuff for debub, make backups
+        if steps % 200 == 0:
+            if commit:
                 model = pickle.dumps(agent.Q_eval.state_dict())
+                optimizer = pickle.dumps(agent.Q_eval.optimizer.state_dict())
+
                 redis.set("model", model)
+                redis.set("optimizer", optimizer)
                 redis.set("model_timestamp", time.time())
 
                 redis.set("epsilon", agent.epsilon)
 
-                # Get the last 100 scores from Redis key "avg_scores" and cast them to floats
-                scores = redis.lrange("avg_scores", -100, -1)
-                scores = [float(score) for score in scores]
+            # Get the last 100 scores from Redis key "avg_scores" and cast them to floats
+            scores = redis.lrange("avg_scores", -100, -1)
+            scores = [float(score) for score in scores]
 
-                if len(losses) > 0:
-                    print('avg loss: %.2f' % np.mean(losses[-100:]), 'avg_score: %.2f' % np.mean(scores),
-                          'epsilon: %.2f' % agent.epsilon, 'samples/sec: %.2f' % np.mean(samples_history))
+            if len(losses) > 0:
+                print('avg loss: %.2f' % np.mean(losses[-100:]), 'avg_score: %.2f' % np.mean(scores),
+                      'epsilon: %.2f' % agent.epsilon, 'samples/sec: %.2f' % np.mean(samples_history))
 
-                # Save the model every 10000 steps
-                if steps % 10000 == 0:
-                    save_model(agent, f"models_bak/rac3_vidcomics_{steps}.pth")
-                    print(f"Saved model to models_bak/rac3_vidcomics_{int(steps/1000)}k.pth")
+            # Save the model every 10000 steps
+            if commit and steps % 10000 == 0:
+                save_model(agent, f"models_bak/rac3_vidcomics_{steps}.pth")
+                print(f"Saved model to models_bak/rac3_vidcomics_{int(steps/1000)}k.pth")
 
-                if args.wandb:
-                    wandb.log({
-                        "avg_score": np.mean(scores),
-                        "loss": np.mean(losses[-100:]),
-                        "epsilon": agent.epsilon,
-                        "samples_per_second": np.mean(samples_history)
-                    })
+            if args.wandb:
+                wandb.log({
+                    "avg_score": np.mean(scores),
+                    "loss": np.mean(losses[-100:]),
+                    "epsilon": agent.epsilon,
+                    "samples_per_second": np.mean(samples_history)
+                })
 
-            steps += 1
-
-            continue
+        steps += 1
 
         time.sleep(0.001)
 

@@ -32,11 +32,13 @@ def start_worker():
     parser.add_argument("--process-name", type=str, required=True)
     parser.add_argument("--render", action="store_true", default=True)
     parser.add_argument("--force-watchdog", action="store_false")
+    parser.add_argument("--epsilon", type=float, default=None)
     args = parser.parse_args()
 
     rpcs3_path = args.rpcs3_path
     process_name = args.process_name
     render = args.render
+    epsilon_override = args.epsilon
 
     # Make new environment and watchdog
     env = RatchetEnvironment()
@@ -53,7 +55,12 @@ def start_worker():
     # Connect to Redis
     redis = Redis(host="localhost", port=6379, db=0)
 
-    update_configuration(redis)
+    if epsilon_override is None:
+        update_configuration(redis)
+    else:
+        print("Running with epsilon override:", epsilon_override)
+        configuration["epsilon"] = float(epsilon_override)
+        configuration["min_epsilon"] = float(epsilon_override)
 
     # Agent that we will use only for inference
     agent = Agent(gamma=0.99, epsilon=configuration["epsilon"], batch_size=0, n_actions=16, eps_end=configuration["min_epsilon"],
@@ -74,10 +81,11 @@ def start_worker():
                 agent.Q_eval.load_state_dict(pickle.loads(configuration["model"]))
                 last_model_fetch_time = float(redis.get("model_timestamp"))
 
-        update_configuration(redis)
+        if epsilon_override is None:
+            update_configuration(redis)
+            agent.epsilon = configuration["epsilon"]
+            agent.eps_min = configuration["min_epsilon"]
 
-        agent.epsilon = configuration["epsilon"]
-        agent.eps_min = configuration["min_epsilon"]
 
         if episodes > 0 and episodes % 5 == 0:
             env.cycle_level()
