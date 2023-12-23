@@ -21,8 +21,8 @@ class Agent:
         self.action_space = [i for i in range(n_actions)]
         self.mem_cntr = 0
 
-        self.Q_eval = DeepQNetwork(lr=lr, feature_count=input_dims, hidden_dims=64, n_actions=n_actions)
-        self.Q_target = DeepQNetwork(lr=lr, feature_count=input_dims, hidden_dims=64, n_actions=n_actions)
+        self.Q_eval = DeepQNetwork(lr=lr, feature_count=input_dims, hidden_dims=256, n_actions=n_actions)
+        self.Q_target = DeepQNetwork(lr=lr, feature_count=input_dims, hidden_dims=256, n_actions=n_actions)
         self.Q_target.freeze()
         self.update_target_network()
 

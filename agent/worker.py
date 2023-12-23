@@ -86,7 +86,6 @@ def start_worker():
             agent.epsilon = configuration["epsilon"]
             agent.eps_min = configuration["min_epsilon"]
 
-
         if episodes > 0 and episodes % 5 == 0:
             env.cycle_level()
 

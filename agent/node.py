@@ -145,8 +145,9 @@ def start():
 
     if args.wandb:
         current_run_id = redis.get("wandb_run_id")
+        current_run_id = current_run_id.decode() if current_run_id is not None else None
 
-        wandb.init(project="rac3-vidcomics", id=current_run_id.decode(), config={
+        wandb.init(project="rac3-vidcomics", id=current_run_id, config={
             "learning_rate": learning_rate,
             "sequence_length": sequence_length,
             "batch_size": batch_size,

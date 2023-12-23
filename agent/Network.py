@@ -7,7 +7,7 @@ import torch.optim as optim
 
 
 class DeepQNetwork(nn.Module):
-    def __init__(self, lr, feature_count, hidden_dims, n_actions, num_layers=3, lstm_units=64):
+    def __init__(self, lr, feature_count, hidden_dims, n_actions, num_layers=3, lstm_units=256):
         super(DeepQNetwork, self).__init__()
 
         self.hidden_dims = hidden_dims
@@ -18,16 +18,24 @@ class DeepQNetwork(nn.Module):
 
         # self.fc0 = nn.Linear(feature_count, self.hidden_dims)
         self.fc0 = nn.Linear(11, self.hidden_dims_halved)
-        self.bn0 = nn.BatchNorm1d(self.hidden_dims)
+        #self.bn0 = nn.BatchNorm1d(self.hidden_dims_halved)
 
         self.raycast_cnn = nn.Sequential(
-            nn.Conv1d(in_channels=2, out_channels=16, kernel_size=2, stride=1),
+            # First convolution layer
+            nn.Conv1d(in_channels=2, out_channels=32, kernel_size=3, stride=1, padding=1),
             nn.LeakyReLU(),
-            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=2, stride=1),
+            nn.MaxPool1d(kernel_size=2, stride=2),  # Reduces the size to 16
+
+            # Second convolution layer
+            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.LeakyReLU(),
-            nn.BatchNorm1d(32),
+            nn.MaxPool1d(kernel_size=2, stride=2),  # Reduces the size to 8
+
+            # Flatten the output for the linear layer
             nn.Flatten(),
-            nn.Linear(32 * 14, self.hidden_dims_halved)  # Adjust the input features of nn.Linear
+
+            # Linear layer to get the desired output size
+            nn.Linear(64 * 4, self.hidden_dims_halved)  # 64 channels * 8 features
         )
 
         self.lstm = nn.LSTM(self.hidden_dims, lstm_units, num_layers, batch_first=True)
@@ -44,7 +52,7 @@ class DeepQNetwork(nn.Module):
         self.value_stream = nn.Linear(self.hidden_dims, 1)
         self.advantage_stream = nn.Linear(self.hidden_dims, self.n_actions)
 
-        self.optimizer = optim.AdamW(self.parameters(), lr=lr, weight_decay=1e-2)
+        self.optimizer = optim.AdamW(self.parameters(), lr=lr, weight_decay=1e-4)
 
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer,
@@ -56,7 +64,7 @@ class DeepQNetwork(nn.Module):
             threshold_mode='abs'
         )
 
-        self.loss = nn.MSELoss()
+        self.loss = nn.HuberLoss()
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.to(self.device)
 
@@ -67,7 +75,7 @@ class DeepQNetwork(nn.Module):
 
         x = F.leaky_relu(self.fc0(state[:, :, :11]), 0.01)
         # x = F.leaky_relu(self.fc0(state), 0.01)
-        # x = self.bn0(x)
+        #x = self.bn0(x)
 
         # Parts of the state gets pre-processed by a CNN
 
