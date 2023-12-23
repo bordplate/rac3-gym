@@ -180,6 +180,7 @@ class RatchetEnvironment:
             self.reward_counters['rewards/death_penalty'] += 0
             self.distance = 0
             terminal = True
+            print("WARNING: Game restart outside of reset()")
 
         # Distance
         distance_travelled = np.sqrt((post_position.x - pre_position.x) ** 2 + (post_position.z - pre_position.z) ** 2)
@@ -194,37 +195,48 @@ class RatchetEnvironment:
         else:
             self.standing_still_frames = 0
 
-        if self.standing_still_frames > 5:
+        if self.standing_still_frames > 10:
             reward -= 0.05
             self.reward_counters['rewards/stand_still_penalty'] -= 0.05
 
         if post_position.x > self.max_x:
             self.distance += post_position.x - self.max_x
             self.max_x = post_position.x
-            reward += 0.01
-            self.reward_counters['rewards/distance_reward'] += 0.01
+            reward += 0.05
+            self.reward_counters['rewards/distance_reward'] += 0.05
 
             self.last_time_moved = post_game_frame_count
 
         if post_position.z > self.max_z:
             self.distance += post_position.z - self.max_z
             self.max_z = post_position.z
-            reward += 0.01
-            self.reward_counters['rewards/distance_reward'] += 0.01
+            reward += 0.05
+            self.reward_counters['rewards/distance_reward'] += 0.05
 
             self.last_time_moved = post_game_frame_count
 
         if self.distance - 20 > self.last_distance_check:
             self.last_distance_check = self.distance
 
-            # Scale reward to time it took to get here, faster = more reward
-            reward += np.max([10 - (post_game_frame_count - self.last_time_check) / 60, 1])
+            # Calculate the time taken to reach this point
+            time_taken = (post_game_frame_count - self.last_time_check) / 60
 
-            self.reward_counters['rewards/checkpoint_reward'] += np.max([10 - (post_game_frame_count - self.last_time_check) / 60, 1])
+            # Exponential scaling factor, adjust 'a' and 'b' as needed
+            a = 1.5  # controls the steepness of the exponential curve
+            b = 5  # controls the base reward value
+
+            min_time = 0.5
+
+            # Calculate exponential reward, faster = more reward
+            # Ensure the reward is at least 1
+            reward += max(b * np.exp(-a * (time_taken - min_time)), 1)
+
+            self.reward_counters['rewards/checkpoint_reward'] += max(b * np.exp(-a * (time_taken - min_time)), 1)
             self.last_time_check = post_game_frame_count
 
         # Shame agent for not progressing distance in a long time
         if self.last_time_moved + 60 * 10 < post_game_frame_count:
+            # Penalize based on remaining health
             reward -= 0.5 * (post_health / 20)
             self.reward_counters['rewards/timeout_penalty'] += 0.5 * (post_health / 20)
             terminal = True
@@ -247,8 +259,8 @@ class RatchetEnvironment:
             self.reward_counters['rewards/death_penalty'] += 0.5
             terminal = True
         elif post_health < self.last_health:
-            reward -= 0.5 * (self.last_health - post_health) / 20
-            self.reward_counters['rewards/damage_penalty'] += 0.5 * (self.last_health - post_health) / 20
+            reward -= 0.1 * (self.last_health - post_health) / 20
+            self.reward_counters['rewards/damage_penalty'] += 0.1 * (self.last_health - post_health) / 20
 
         self.last_health = post_health
         self.remaining_idle_time = ((self.last_time_moved + 60 * 10) - post_game_frame_count) / 60
