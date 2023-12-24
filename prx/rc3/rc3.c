@@ -85,6 +85,15 @@ void pre_game_loop_hook() {
     _c_game_tick();
 }
 
+#define headless *((int*)0x1B00200)
+
+SHK_HOOK(void, render, int);
+void render_hook(int a1) {
+    if (headless == 0) {
+        SHK_CALL_HOOK(render, 0);
+    }
+}
+
 #define remote_pressed_buttons *((int*)0x1B00008)
 #define last_remote_pressed_buttons *((int*)0x1B0000C)
 
@@ -130,6 +139,7 @@ void rc3_init() {
     SHK_BIND_HOOK(cellGameContentPermit, cellGameContentPermitHook);
 
     SHK_BIND_HOOK(pre_game_loop, pre_game_loop_hook);
+    SHK_BIND_HOOK(render, render_hook);
 
     SHK_BIND_HOOK(cellPadGetDataRedirect, cellPadGetDataRedirectHook);
 
